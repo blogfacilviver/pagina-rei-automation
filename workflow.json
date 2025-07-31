@@ -1,0 +1,258 @@
+{
+  "name": "Página Rei - Geração de Conteúdo",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "pagina-rei-generate",
+        "responseMode": "onReceived",
+        "httpMethod": "POST"
+      },
+      "id": "webhook-trigger-1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const searchTerm = $json.body.search_term;\nreturn {\n  operation: 'SearchItems',\n  payload: {\n    Keywords: searchTerm,\n    PartnerTag: 'seu-id-br-20',\n    PartnerType: 'Associates',\n    Marketplace: 'www.amazon.com.br',\n    SearchIndex: 'PetProducts',\n    ItemCount: 5,\n    Resources: []\n  }\n};"
+      },
+      "id": "prepare-search-payload",
+      "name": "Prepare SearchItems Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionName": "lambda_proxy_paapi5",
+        "payload": "={{ $('Prepare SearchItems Payload').item.json }}"
+      },
+      "id": "invoke-search-lambda",
+      "name": "Invoke Search Lambda",
+      "type": "n8n-nodes-aws.awsLambda",
+      "typeVersion": 1,
+      "position": [
+        700,
+        300
+      ],
+      "credentials": {
+        "aws": {
+          "id": "aws-credential-id",
+          "name": "AWS Credentials for Lambda"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $json.body.SearchResult.Items;\nconst asins = items.map(item => item.ASIN);\nreturn { asins };"
+      },
+      "id": "extract-asins",
+      "name": "Extract ASINs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const asins = $json.asins;\nreturn {\n  operation: 'GetItems',\n  payload: {\n    ItemIds: asins,\n    PartnerTag: 'seu-id-br-20',\n    PartnerType: 'Associates',\n    Marketplace: 'www.amazon.com.br',\n    Resources: []\n  }\n};"
+      },
+      "id": "prepare-getitems-payload",
+      "name": "Prepare GetItems Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionName": "lambda_proxy_paapi5",
+        "payload": "={{ $('Prepare GetItems Payload').item.json }}"
+      },
+      "id": "invoke-getitems-lambda",
+      "name": "Invoke GetItems Lambda",
+      "type": "n8n-nodes-aws.awsLambda",
+      "typeVersion": 1,
+      "position": [
+        1300,
+        300
+      ],
+      "credentials": {
+        "aws": {
+          "id": "aws-credential-id",
+          "name": "AWS Credentials for Lambda"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $json.body.ItemsResult.Items;\nlet prompt_text = '';\nitems.forEach((item, index) => {\n  prompt_text += `Produto ${index + 1}:\\nTítulo: ${item.ItemInfo.Title.DisplayValue}\\nPreço: ${item.Offers?.Listings?.Price?.DisplayAmount || 'N/A'}\\nCaracterísticas: ${item.ItemInfo.Features?.DisplayValues.join(', ') || 'N/A'}\\n\\n`;\n});\nreturn { prompt_text };"
+      },
+      "id": "format-ai-prompt",
+      "name": "Format AI Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4-turbo",
+        "messages": {
+          "message": [
+            {
+              "role": "user",
+              "content": "={{ $('Format AI Prompt').item.json.prompt_text }}"
+            }
+          ]
+        }
+      },
+      "id": "generate-review-openai",
+      "name": "OpenAI",
+      "type": "n8n-nodes-base.openAiChat",
+      "typeVersion": 2,
+      "position": [
+        1700,
+        300
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credential-id",
+          "name": "OpenAI API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://your-site.com/wp-json/pagina-rei/v1/add-review",
+        "sendBody": true,
+        "bodyContentType": "json",
+        "jsonBody": "={{ { \"search_term\": $('Webhook').item.json.body.search_term, \"review_content\": $('OpenAI').item.json.choices.message.content } }}"
+      },
+      "id": "post-to-wordpress",
+      "name": "HTTP Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1900,
+        300
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "wordpress-credential-id",
+          "name": "WordPress Application Password"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Prepare SearchItems Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare SearchItems Payload": {
+      "main": [
+        [
+          {
+            "node": "Invoke Search Lambda",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Invoke Search Lambda": {
+      "main": [
+        [
+          {
+            "node": "Extract ASINs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract ASINs": {
+      "main": [
+        [
+          {
+            "node": "Prepare GetItems Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare GetItems Payload": {
+      "main": [
+        [
+          {
+            "node": "Invoke GetItems Lambda",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Invoke GetItems Lambda": {
+      "main": [
+        [
+          {
+            "node": "Format AI Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format AI Prompt": {
+      "main": [
+        [
+          {
+            "node": "OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {},
+  "id": "1",
+  "tags": [],
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "updatedAt": "2024-01-01T00:00:00.000Z"
+}
